@@ -2,13 +2,13 @@
 from datetime import datetime, time as dtime, timezone
 import threading
 from typing import Optional
-from .db import charts_col
+from backend.db import charts_col
 # import your compute function
 from pathlib import Path
 import sys
 # ensure project root on path if needed
 sys.path.append(str(Path(__file__).resolve().parents[1]))
-from astrologer import build_charts  # <- your module
+from backend.astrologer import build_charts  # <- your module
 
 def compute_and_save_static_charts(username: str, name: str,
                                    birth_date_iso: str, birth_time_str: str, birth_place: str):

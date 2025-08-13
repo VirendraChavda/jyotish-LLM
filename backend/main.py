@@ -3,10 +3,10 @@ import os
 from fastapi import FastAPI, Depends, HTTPException, Header
 from fastapi.middleware.cors import CORSMiddleware
 from typing import Optional
-from .db import users_col, profiles_col, charts_col, sessions_col
-from .auth import hash_password, verify_password, make_token, decode_token
-from .models import *
-from .astro_worker import spawn_chart_job
+from backend.db import users_col, profiles_col, charts_col, sessions_col
+from backend.auth import hash_password, verify_password, make_token, decode_token
+from backend.models import *
+from backend.astroworker import spawn_chart_job
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -107,3 +107,5 @@ def chat(req: ChatRequest, user: str = Depends(get_current_user)):
     else:
         last_user = next((m.content for m in reversed(req.messages) if m.role=="user"), "")
         return {"reply": f"I’m here to help. You said: “{last_user}”. What would you like to explore first—career, relationships, or timing?"}
+    
+

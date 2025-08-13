@@ -406,7 +406,7 @@ def print_influence_table(rows):
 
 # ----------------------------- MAIN API -----------------------------
 
-def build_charts(y, m, d, hh, mi, place_name):
+def build_charts(y, m, d, hh, mi, place_name, current_loc):
     """
     Builds charts + dasha + transit + influence table ingredients.
     Returns dict with everything, plus prints the influence table for 'now'.
@@ -416,24 +416,32 @@ def build_charts(y, m, d, hh, mi, place_name):
     swe.set_sid_mode(AYANAMSA_MODE, 0, 0)
 
     # Location & timezone
-    location_details = get_location_details(place_name)
-    lat, lon, tz_offset, tz_name = (
-        location_details["latitude"],
-        location_details["longitude"],
-        location_details["timezone_offset"],
-        location_details["timezone_name"]
+    birth_location_details = get_location_details(place_name)
+    birth_lat, birth_lon, birth_tz_offset, birth_tz_name = (
+        birth_location_details["latitude"],
+        birth_location_details["longitude"],
+        birth_location_details["timezone_offset"],
+        birth_location_details["timezone_name"]
+    )
+
+    current_location_details = get_location_details(current_loc)
+    current_lat, current_lon, current_tz_offset, current_tz_name = (
+        current_location_details["latitude"],
+        current_location_details["longitude"],
+        current_location_details["timezone_offset"],
+        current_location_details["timezone_name"]
     )
 
     Place = namedtuple("Place", ["name", "latitude", "longitude", "timezone"])
-    place_obj = Place(place_name, lat, lon, tz_offset)
+    place_obj = Place(place_name, birth_lat, birth_lon, birth_tz_offset)
     place_tuple = (place_obj.name, place_obj.latitude, place_obj.longitude, place_obj.timezone)
 
     # Birth JD in UT
-    jd_birth = jd_ut(y, m, d, hh, mi, tz_offset)
+    jd_birth = jd_ut(y, m, d, hh, mi, birth_tz_offset)
 
     # Ascendant (Swiss Ephemeris) — robust float, avoids list/dict ambiguity
     # houses() returns (cusps[1..12], ascmc[0..9]); ascmc[0] is Ascendant longitude
-    cusps, ascmc = swe.houses(jd_birth, lat, lon, b'P')  # P=Placidus (Asc longitude is independent of house system)
+    cusps, ascmc = swe.houses(jd_birth, birth_lat, birth_lon, b'W')  # P=Placidus (Asc longitude is independent of house system)
     asc_long = normalize_deg(ascmc[0])
 
     # Charts from jhora (kept as in your code)
@@ -448,9 +456,9 @@ def build_charts(y, m, d, hh, mi, place_name):
         dasamsa = charts.divisional_positions_from_rasi_positions(rasi, 10)
 
     # Today's positions
-    tz_obj = pytz.timezone(tz_name)
-    now_local = datetime.now(tz_obj)
-    jd_today = jd_ut(now_local.year, now_local.month, now_local.day, now_local.hour, now_local.minute, tz_offset)
+    current_tz_obj = pytz.timezone(current_tz_name)
+    now_local = datetime.now(current_tz_obj)
+    jd_today = jd_ut(now_local.year, now_local.month, now_local.day, now_local.hour, now_local.minute, current_tz_offset)
     transit_rasi = charts.rasi_chart(jd_today, place_obj)
     transit_positions = {planet: drik.sidereal_longitude(jd_today, planet) for planet in range(9)}
 
@@ -464,16 +472,16 @@ def build_charts(y, m, d, hh, mi, place_name):
     # Natal strength (simple dignity + angularity)
     natal_strengths = calculate_natal_strength_simple(jd_birth, asc_long)
 
-    # Transit events (3 years ahead)
-    jd_next3y = jd_ut(now_local.year + 3, now_local.month, now_local.day, now_local.hour, now_local.minute, tz_offset)
+    # Transit events (2 years ahead)
+    jd_next3y = jd_ut(now_local.year + 2, now_local.month, now_local.day, now_local.hour, now_local.minute, current_tz_offset)
     transit_events = get_transit_events(jd_today, jd_next3y, asc_long)
 
     # Influence table for now
     rows = influence_scores_table(natal_strengths, current_md, current_ad, jd_today, asc_long)
 
     # Print neat table
-    print("\nInfluence (now): MD = {0}, AD = {1}".format(current_md, current_ad))
-    print_influence_table(rows)
+    #print("\nInfluence (now): MD = {0}, AD = {1}".format(current_md, current_ad))
+    #print_influence_table(rows)
 
     return {
         "ascendant_longitude": asc_long,
@@ -486,14 +494,20 @@ def build_charts(y, m, d, hh, mi, place_name):
         "antardasha": ad_table,
         "natal_strengths": natal_strengths,
         "transit_events": transit_events,
-        "influence_rows_now": rows,
+        "influence_now": rows,
         "current_md": current_md,
         "current_ad": current_ad,
-        "location": {
-            "lat": lat,
-            "lon": lon,
-            "tz_name": tz_name,
-            "tz_offset": tz_offset
+        "birth_location": {
+            "lat": birth_lat,
+            "lon": birth_lon,
+            "tz_name": birth_tz_name,
+            "tz_offset": birth_tz_offset
+        },
+        "current_location": {
+            "lat": current_lat,
+            "lon": current_lon,
+            "tz_name": current_tz_name,
+            "tz_offset": current_tz_offset
         }
     }
 
@@ -501,11 +515,12 @@ def build_charts(y, m, d, hh, mi, place_name):
 
 if __name__ == "__main__":
     # Example usage:
-    birth_y, birth_m, birth_d = 1990, 1, 1
-    birth_h, birth_min = 12, 0
+    birth_y, birth_m, birth_d = 1992, 10, 15
+    birth_h, birth_min = 23, 30
     place = "Kodinar, Gujarat"
+    current_place = "Colchester, Essex"
 
-    _ = build_charts(birth_y, birth_m, birth_d, birth_h, birth_min, place)
+    _ = build_charts(birth_y, birth_m, birth_d, birth_h, birth_min, place, current_place)
     print("ascendant: ", _['ascendant_longitude'])
     print("/n")
     print("/n")
@@ -545,5 +560,8 @@ if __name__ == "__main__":
     print("current_ad: ", _['current_ad'])
     print("/n")
     print("/n")
-    print("location: ", _['location'])
+    print("location: ", _['birth_location'])
+    print("/n")
+    print("/n")
+    print("location: ", _['current_location'])
 

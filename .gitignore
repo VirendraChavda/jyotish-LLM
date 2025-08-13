@@ -3,3 +3,6 @@
 .gitignore
 FaissDB
 ephe
+mongo
+backend/db_test.py
+backend/__pycache__
