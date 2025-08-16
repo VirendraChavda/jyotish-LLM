@@ -406,7 +406,7 @@ def print_influence_table(rows):
 
 # ----------------------------- MAIN API -----------------------------
 
-def build_charts(y, m, d, hh, mi, place_name, current_loc):
+def build_charts(y, m, d, hh, mi, birth_place_name, current_loc):
     """
     Builds charts + dasha + transit + influence table ingredients.
     Returns dict with everything, plus prints the influence table for 'now'.
@@ -416,7 +416,7 @@ def build_charts(y, m, d, hh, mi, place_name, current_loc):
     swe.set_sid_mode(AYANAMSA_MODE, 0, 0)
 
     # Location & timezone
-    birth_location_details = get_location_details(place_name)
+    birth_location_details = get_location_details(birth_place_name)
     birth_lat, birth_lon, birth_tz_offset, birth_tz_name = (
         birth_location_details["latitude"],
         birth_location_details["longitude"],
@@ -433,7 +433,7 @@ def build_charts(y, m, d, hh, mi, place_name, current_loc):
     )
 
     Place = namedtuple("Place", ["name", "latitude", "longitude", "timezone"])
-    place_obj = Place(place_name, birth_lat, birth_lon, birth_tz_offset)
+    place_obj = Place(birth_place_name, birth_lat, birth_lon, birth_tz_offset)
     place_tuple = (place_obj.name, place_obj.latitude, place_obj.longitude, place_obj.timezone)
 
     # Birth JD in UT
@@ -482,6 +482,7 @@ def build_charts(y, m, d, hh, mi, place_name, current_loc):
     # Print neat table
     #print("\nInfluence (now): MD = {0}, AD = {1}".format(current_md, current_ad))
     #print_influence_table(rows)
+    #influence_table = {"phase": "now", "MD": current_md, "AD": current_ad}
 
     return {
         "ascendant_longitude": asc_long,
