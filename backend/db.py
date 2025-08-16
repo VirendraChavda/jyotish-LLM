@@ -2,7 +2,7 @@
 import os
 from pymongo import MongoClient, ASCENDING
 from dotenv import load_dotenv
-from backend.auth import hash_password
+from auth import hash_password
 
 import sys
 from pathlib import Path
