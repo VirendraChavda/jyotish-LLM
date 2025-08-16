@@ -9,8 +9,7 @@ from pymongo.errors import PyMongoError
 from astrologer import build_charts
 from db import users_col, profiles_col, sessions_col, mongo_sanitize
 
-def compute_and_save_static_charts(username: str, name: str,
-                                   birth_date_iso: str, birth_time_str: str, birth_place: str, current_place: str):
+def compute_and_save_static_charts(username: str, name: str, birth_date_iso: str, birth_time_str: str, birth_place: str, current_place: str):
     try:
         y, m, d = map(int, birth_date_iso.split("-"))
         hh, mm = map(int, birth_time_str.split(":"))
@@ -65,6 +64,17 @@ def compute_and_save_static_charts(username: str, name: str,
         # optionally also: logging.exception("Failed to build charts for %s", username)
         #print("Error!")
 
+def input_for_LLM(username: str, name: str, birth_date_iso: str, birth_time_str: str, birth_place: str, current_place: str):
+    try:
+        y, m, d = map(int, birth_date_iso.split("-"))
+        hh, mm = map(int, birth_time_str.split(":"))
+
+        out = build_charts(y, m, d, hh, mm, birth_place, current_place)
+        return username, name, out
+
+    except:
+        print("Error")
+       
 
 def spawn_chart_job(*args, **kwargs):
     t = threading.Thread(target=compute_and_save_static_charts, args=args, kwargs=kwargs, daemon=True)
