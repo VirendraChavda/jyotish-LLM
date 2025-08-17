@@ -509,7 +509,9 @@ def build_charts(y, m, d, hh, mi, birth_place_name, current_loc):
             "lon": current_lon,
             "tz_name": current_tz_name,
             "tz_offset": current_tz_offset
-        }
+        },
+        "birth_datetime": datetime(y, m, d, hh, mi, tzinfo=pytz.timezone(birth_tz_name)),
+        "today_datetime": now_local
     }
 
 # ----------------------- OPTIONAL: QUICK DEMO -----------------------

@@ -6,5 +6,5 @@ ephe
 mongo
 backend/db_test.py
 backend/__pycache__
-experiments
-
+LLM_experiment.ipynb
+rag_experiment.ipynb
