@@ -32,6 +32,7 @@ from collections import namedtuple
 
 from jhora.panchanga import drik
 from jhora.horoscope.chart import charts
+from collections.abc import Mapping, Sequence
 
 # --------------------------- CONFIG ---------------------------------
 
@@ -404,6 +405,53 @@ def print_influence_table(rows):
     for r in rows:
         print(sep.join(str(r[c]).ljust(widths[c]) for c in col_names))
 
+
+# ----------------------------- PLANET NAME REMAPING ----------------
+
+PLANET_NAMES = {
+    0: "Sun", 1: "Moon", 2: "Mars", 3: "Mercury", 4: "Jupiter",
+    5: "Venus", 6: "Saturn", 7: "Rahu", 8: "Ketu"
+    }
+
+def map_planet_key(k):
+    # keep Lagna variants as "Lagna"
+    if k in ("L", "Asc", "Lagna"):
+        return "Lagna"
+    # handle int and digit-string keys
+    if isinstance(k, int):
+        return PLANET_NAMES.get(k, k)
+    if isinstance(k, str) and k.isdigit():
+        return PLANET_NAMES.get(int(k), k)
+    return k
+
+def rename_planet_keys(obj):
+    """
+    Recursively rename planet-number keys/labels to names.
+    - dict: rename keys and recurse values
+    - list/tuple: if looks like [key, value] pair, rename the first element; else recurse into elements
+    - everything else: return as-is
+    """
+
+    if isinstance(obj, Mapping):
+        return {map_planet_key(k): rename_planet_keys(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        out = []
+        for item in obj:
+            if (isinstance(item, (list, tuple))
+                    and len(item) == 2):
+                # likely like [planet_key, value]
+                new_key = map_planet_key(item[0])
+                out.append([new_key, rename_planet_keys(item[1])])
+            else:
+                out.append(rename_planet_keys(item))
+        return out
+    if isinstance(obj, tuple):
+        # preserve tuple type
+        if len(obj) == 2:
+            return (rename_planet_keys(obj[0]), rename_planet_keys(obj[1]))
+        return tuple(rename_planet_keys(x) for x in obj)
+    return obj  # numbers/strings/etc.
+
 # ----------------------------- MAIN API -----------------------------
 
 def build_charts(y, m, d, hh, mi, birth_place_name, current_loc):
@@ -411,6 +459,7 @@ def build_charts(y, m, d, hh, mi, birth_place_name, current_loc):
     Builds charts + dasha + transit + influence table ingredients.
     Returns dict with everything, plus prints the influence table for 'now'.
     """
+
     # Setup ephemeris
     swe.set_ephe_path(EPHE_PATH)
     swe.set_sid_mode(AYANAMSA_MODE, 0, 0)
@@ -479,10 +528,18 @@ def build_charts(y, m, d, hh, mi, birth_place_name, current_loc):
     # Influence table for now
     rows = influence_scores_table(natal_strengths, current_md, current_ad, jd_today, asc_long)
 
-    # Print neat table
-    #print("\nInfluence (now): MD = {0}, AD = {1}".format(current_md, current_ad))
-    #print_influence_table(rows)
-    #influence_table = {"phase": "now", "MD": current_md, "AD": current_ad}
+    # Conduct planet maping
+    rasi = rename_planet_keys(rasi)
+    navamsa = rename_planet_keys(navamsa)
+    dasamsa = rename_planet_keys(dasamsa)
+    transit_rasi = rename_planet_keys(transit_rasi)
+    md_table = rename_planet_keys(md_table)
+    ad_table = rename_planet_keys(ad_table)
+    natal_strengths = rename_planet_keys(natal_strengths)
+    transit_events = rename_planet_keys(transit_events)
+    rows = rename_planet_keys(rows)
+    current_md = rename_planet_keys(current_md)
+    current_ad = rename_planet_keys(current_ad)
 
     return {
         "ascendant_longitude": asc_long,
@@ -554,7 +611,7 @@ if __name__ == "__main__":
     print("transit_events: ", _['transit_events'])
     print("/n")
     print("/n")
-    print("influence_rows_now: ", _['influence_rows_now'])
+    print("influence_rows_now: ", _['influence_now'])
     print("/n")
     print("/n")
     print("current_md: ", _['current_md'])
