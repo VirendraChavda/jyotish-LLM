@@ -8,3 +8,4 @@ backend/db_test.py
 backend/__pycache__
 LLM_experiment.ipynb
 rag_experiment.ipynb
+memory_experiment.ipynb
