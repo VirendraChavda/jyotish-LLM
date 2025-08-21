@@ -9,4 +9,4 @@ backend/__pycache__
 LLM_experiment.ipynb
 rag_experiment.ipynb
 memory_experiment.ipynb
-backend/astroworker.py
+astroworker.py
