@@ -78,6 +78,23 @@ DEBIL_DEG = {
     swe.SATURN:   (0*30 + 20)   # Saturn 20° Aries
 }
 
+# ------------------------ Cache important functions ------------------------
+
+from functools import lru_cache
+_GEOLOC = Nominatim(user_agent="astro_app")
+_TF = TimezoneFinder()
+
+@lru_cache(maxsize=1024)
+def _swe_calc_ut(jd, pid, flg=0):
+    # Return immutable tuple so it is cacheable
+    xx, retflag = swe.calc_ut(jd, pid, flg)
+    # Some swe builds return lists; normalize to tuple
+    return (tuple(xx), retflag)
+
+@lru_cache(maxsize=256)
+def _revjul(jd):
+    return swe.revjul(jd, swe.GREG_CAL)
+
 # ------------------------ TIME & GEO HELPERS ------------------------
 
 def jd_ut(y, m, d, hh, mi, tz_hours):
@@ -90,17 +107,16 @@ def revjul_to_datetime_utc(jd):
     y, m, d, ut_hours = swe.revjul(jd, swe.GREG_CAL)
     return datetime(y, m, d) + timedelta(hours=ut_hours)
 
+@lru_cache(maxsize=256)
 def get_location_details(city_name):
-    """Geocode + timezone + CURRENT UTC offset hours (good enough for present-tense use)."""
-    geolocator = Nominatim(user_agent="astro_app")
-    location = geolocator.geocode(city_name)
+    """Geocode + timezone + CURRENT UTC offset hours (cached)."""
+    location = _GEOLOC.geocode(city_name)
     if not location:
         raise ValueError(f"City not found: {city_name}")
 
     lat, lon = location.latitude, location.longitude
 
-    tf = TimezoneFinder()
-    tz_name = tf.timezone_at(lat=lat, lng=lon)
+    tz_name = _TF.timezone_at(lat=lat, lng=lon)
     if not tz_name:
         raise ValueError(f"Timezone not found for: {city_name}")
 
@@ -268,32 +284,54 @@ def calculate_natal_strength_simple(jd_birth, asc_long):
 # -------------------------- TRANSITS & EVENTS -----------------------
 
 def get_transit_house_for_planet(jd_when, asc_long, pid):
-    res = swe.calc_ut(jd_when, pid, swe.FLG_SPEED)  # returns (xx, retflag)
-    xx = res[0] if isinstance(res, tuple) else res
+    xx, _ = _swe_calc_ut(jd_when, pid, swe.FLG_SPEED)
     lon = normalize_deg(xx[0])
     lon_speed = xx[3]
     house = house_index_from_asc(lon, asc_long) + 1
     retro = lon_speed < 0
     return house, retro, lon
 
-def get_transit_events(jd_start, jd_end, ascendant_long):
+def _sign_index(lon): return int(normalize_deg(lon) // 30)
+def _house_index_from_asc_deg(lon, asc_long): return int(((normalize_deg(lon) - asc_long) % 360) // 30)
+
+def _refine_change_day(jd_lo, jd_hi, planet_id, asc_long, check_sign=True):
+    """Binary search to the day a sign/house index changes."""
+    lo, hi = jd_lo, jd_hi
+    xx_lo, _ = _swe_calc_ut(lo, planet_id, 0)
+    val_lo = _sign_index(xx_lo[0]) if check_sign else _house_index_from_asc_deg(xx_lo[0], asc_long)
+    while hi - lo > 0.5:  # ~12h precision; good enough to land on correct date
+        mid = (lo + hi) / 2.0
+        xx_mid, _ = _swe_calc_ut(mid, planet_id, 0)
+        val_mid = _sign_index(xx_mid[0]) if check_sign else _house_index_from_asc_deg(xx_mid[0], asc_long)
+        if val_mid != val_lo:
+            hi = mid
+        else:
+            lo = mid
+    return hi  # jd close to boundary
+
+def get_transit_events(jd_start, jd_end, ascendant_long, step_days=5.0):
     """
-    Sign and house change dates for the classic 7 planets, stepping daily (simple).
+    Sign and house change dates for the classic 7 planets, using coarse steps with refinement.
+    ~5-10x fewer ephemeris calls than daily stepping.
     """
-    swe.set_ephe_path(EPHE_PATH)
     events = []
     for planet_name, planet_id in PLANETS.items():
-        prev_sign = None
-        prev_house = None
-        jd = jd_start
-        while jd <= jd_end:
-            res = swe.calc_ut(jd, planet_id)
-            lon = normalize_deg(res[0][0] if isinstance(res[0], (list, tuple)) else res[0])
-            sign_index = int(lon // 30)
-            house_index = int(((lon - ascendant_long) % 360) // 30)
+        # Initialize at start
+        xx0, _ = _swe_calc_ut(jd_start, planet_id, 0)
+        prev_sign = _sign_index(xx0[0])
+        prev_house = _house_index_from_asc_deg(xx0[0], ascendant_long)
 
-            if prev_sign is not None and sign_index != prev_sign:
-                y, m, d, _ = swe.revjul(jd, swe.GREG_CAL)
+        jd = jd_start + step_days
+        while jd <= jd_end + 1e-6:
+            xx, _ = _swe_calc_ut(jd, planet_id, 0)
+            sign_index = _sign_index(xx[0])
+            house_index = _house_index_from_asc_deg(xx[0], ascendant_long)
+
+            # Sign change?
+            if sign_index != prev_sign:
+                # refine in (jd - step_days, jd]
+                jd_change = _refine_change_day(jd - step_days, jd, planet_id, ascendant_long, check_sign=True)
+                y, m, d, _ = _revjul(jd_change)
                 events.append({
                     "planet": planet_name,
                     "type": "sign_change",
@@ -301,8 +339,12 @@ def get_transit_events(jd_start, jd_end, ascendant_long):
                     "from": SIGNS[prev_sign],
                     "to": SIGNS[sign_index]
                 })
-            if prev_house is not None and house_index != prev_house:
-                y, m, d, _ = swe.revjul(jd, swe.GREG_CAL)
+                prev_sign = sign_index
+
+            # House change?
+            if house_index != prev_house:
+                jd_change = _refine_change_day(jd - step_days, jd, planet_id, ascendant_long, check_sign=False)
+                y, m, d, _ = _revjul(jd_change)
                 events.append({
                     "planet": planet_name,
                     "type": "house_change",
@@ -310,11 +352,11 @@ def get_transit_events(jd_start, jd_end, ascendant_long):
                     "from_house": prev_house + 1,
                     "to_house": house_index + 1
                 })
+                prev_house = house_index
 
-            prev_sign = sign_index
-            prev_house = house_index
-            jd += 1.0
+            jd += step_days
     return events
+
 
 # ---------------------- INFLUENCE SCORE (BASIC) ---------------------
 
@@ -334,53 +376,39 @@ def dasha_weight_for_planet(planet_name, current_md, current_ad):
         return 1.15
     return 1.0
 
-def transit_context_factor(planet_name, jd_when, asc_long):
-    """
-    ~0.3..1.2 factor based on transit house & simple conditions.
-      - Base by house (angular 1.0, succedent 0.6, cadent 0.3)
-      - Retrograde +0.1
-      - Combust (within 8° of Sun) ×0.8 (penalty); Moon ignored
-    """
+def transit_context_factor(planet_name, jd_when, asc_long, sun_lon=None):
     pid = PLANETS[planet_name]
     house, retro, lon = get_transit_house_for_planet(jd_when, asc_long, pid)
 
     # base house factor
     h_idx = house - 1
-    if h_idx in (0, 3, 6, 9):       # angular
-        base = 1.0
-    elif h_idx in (1, 4, 7, 10):    # succedent
-        base = 0.6
-    else:                           # cadent
-        base = 0.3
+    if h_idx in (0, 3, 6, 9):       base = 1.0
+    elif h_idx in (1, 4, 7, 10):    base = 0.6
+    else:                           base = 0.3
 
-    # retrograde bonus
     bonus = 0.1 if retro else 0.0
 
-    # combustion penalty (skip Moon)
-    res_sun = swe.calc_ut(jd_when, swe.SUN)
-    sun_lon = res_sun[0][0] if isinstance(res_sun[0], (list, tuple)) else res_sun[0]
     combust_penalty = 1.0
     if planet_name != "Moon":
-        from math import fmod
+        if sun_lon is None:
+            sun_xx, _ = _swe_calc_ut(jd_when, swe.SUN)
+            sun_lon = sun_xx[0]
         def circ_dist(a,b): return abs((a - b + 180.0) % 360.0 - 180.0)
         if circ_dist(normalize_deg(lon), normalize_deg(sun_lon)) < 8.0:
             combust_penalty = 0.8
 
     factor = (base + bonus) * combust_penalty
-    factor = max(0.1, min(1.2, factor))
-    return factor, house
+    return max(0.1, min(1.2, factor)), house
 
 def influence_scores_table(natal_strengths_0_60, current_md, current_ad, jd_when, asc_long):
-    """
-    Returns list of rows: {Planet, NatalStrength, RulingNow?, TransitHouse, InfluenceScore}
-    InfluenceScore (0..100 scale) = 100 × (dasha_weight × (natal/60) × transit_factor)
-    """
     rows = []
+    sun_xx, _ = _swe_calc_ut(jd_when, swe.SUN)
+    sun_lon = sun_xx[0]
     for name in PLANETS.keys():
-        natal = natal_strengths_0_60[name]               # 0..60
+        natal = natal_strengths_0_60[name]
         nat_norm = max(0.0, min(1.0, natal / 60.0))
         w = dasha_weight_for_planet(name, current_md, current_ad)
-        trans_factor, house = transit_context_factor(name, jd_when, asc_long)
+        trans_factor, house = transit_context_factor(name, jd_when, asc_long, sun_lon=sun_lon)
         score = 100.0 * (w * nat_norm * trans_factor)
         ruling_now = ("MD" if name == current_md else "") + ("/AD" if name == current_ad else "")
         ruling_now = ruling_now.strip("/") if ruling_now else ""
@@ -393,6 +421,7 @@ def influence_scores_table(natal_strengths_0_60, current_md, current_ad, jd_when
         })
     rows.sort(key=lambda r: r["InfluenceScore"], reverse=True)
     return rows
+
 
 def print_influence_table(rows):
     col_names = ["Planet", "NatalStrength", "RulingNow?", "TransitHouse", "InfluenceScore"]
@@ -454,7 +483,7 @@ def rename_planet_keys(obj):
 
 # ----------------------------- MAIN API -----------------------------
 
-def build_charts(y, m, d, hh, mi, birth_place_name, current_loc):
+def build_charts(y, m, d, hh, mi, birth_place_name, current_loc, include_transit_events=True, transit_span_years=3, transit_step_days=5.0):
     """
     Builds charts + dasha + transit + influence table ingredients.
     Returns dict with everything, plus prints the influence table for 'now'.
@@ -522,8 +551,11 @@ def build_charts(y, m, d, hh, mi, birth_place_name, current_loc):
     natal_strengths = calculate_natal_strength_simple(jd_birth, asc_long)
 
     # Transit events (2 years ahead)
-    jd_next3y = jd_ut(now_local.year + 2, now_local.month, now_local.day, now_local.hour, now_local.minute, current_tz_offset)
-    transit_events = get_transit_events(jd_today, jd_next3y, asc_long)
+    transit_events = []
+    if include_transit_events and transit_span_years > 0:
+        end_year = now_local.year + transit_span_years
+        jd_future = jd_ut(end_year, now_local.month, now_local.day, now_local.hour, now_local.minute, current_tz_offset)
+        transit_events = get_transit_events(jd_today, jd_future, asc_long, step_days=transit_step_days)
 
     # Influence table for now
     rows = influence_scores_table(natal_strengths, current_md, current_ad, jd_today, asc_long)
@@ -571,57 +603,74 @@ def build_charts(y, m, d, hh, mi, birth_place_name, current_loc):
         "today_datetime": now_local
     }
 
+# Create chart inputs for LLM
+
+def input_for_LLM(username: str, name: str, birth_date_iso: str, birth_time_str: str, birth_place: str, current_place: str,
+                  include_transit_events=True, transit_span_years=3):
+    try:
+        y, m, d = map(int, birth_date_iso.split("-"))
+        hh, mm = map(int, birth_time_str.split(":"))
+
+        out = build_charts(y, m, d, hh, mm, birth_place, current_place, include_transit_events=include_transit_events, transit_span_years=transit_span_years)
+        return username, name, out
+
+    except:
+        print("Error")
+
 # ----------------------- OPTIONAL: QUICK DEMO -----------------------
 
 if __name__ == "__main__":
     # Example usage:
-    birth_y, birth_m, birth_d = 1992, 10, 15
-    birth_h, birth_min = 23, 30
-    place = "Kodinar, Gujarat"
-    current_place = "Colchester, Essex"
+    # birth_y, birth_m, birth_d = 1992, 10, 15
+    # birth_h, birth_min = 23, 30
+    # place = "Kodinar, Gujarat"
+    # current_place = "Colchester, Essex"
 
-    _ = build_charts(birth_y, birth_m, birth_d, birth_h, birth_min, place, current_place)
-    print("ascendant: ", _['ascendant_longitude'])
-    print("/n")
-    print("/n")
-    print("rasi_chart: ", _['rasi_chart'])
-    print("/n")
-    print("/n")
-    print("navamsa_chart: ", _['navamsa_chart'])
-    print("/n")
-    print("/n")
-    print("dasamsa_chart: ", _['dasamsa_chart'])
-    print("/n")
-    print("/n")
-    print("transit_chart: ", _['transit_chart'])
-    print("/n")
-    print("/n")
-    print("transit_positions: ", _['transit_positions'])
-    print("/n")
-    print("/n")
-    print("mahadasha: ", _['mahadasha'])
-    print("/n")
-    print("/n")
-    print("antardasha: ", _['antardasha'])
-    print("/n")
-    print("/n")
-    print("natal_strengths: ", _['natal_strengths'])
-    print("/n")
-    print("/n")
-    print("transit_events: ", _['transit_events'])
-    print("/n")
-    print("/n")
-    print("influence_rows_now: ", _['influence_now'])
-    print("/n")
-    print("/n")
-    print("current_md: ", _['current_md'])
-    print("/n")
-    print("/n")
-    print("current_ad: ", _['current_ad'])
-    print("/n")
-    print("/n")
-    print("location: ", _['birth_location'])
-    print("/n")
-    print("/n")
-    print("location: ", _['current_location'])
+    # _ = build_charts(birth_y, birth_m, birth_d, birth_h, birth_min, place, current_place, include_transit_events=True, transit_span_years=3)
+    # print("ascendant: ", _['ascendant_longitude'])
+    # print("/n")
+    # print("/n")
+    # print("rasi_chart: ", _['rasi_chart'])
+    # print("/n")
+    # print("/n")
+    # print("navamsa_chart: ", _['navamsa_chart'])
+    # print("/n")
+    # print("/n")
+    # print("dasamsa_chart: ", _['dasamsa_chart'])
+    # print("/n")
+    # print("/n")
+    # print("transit_chart: ", _['transit_chart'])
+    # print("/n")
+    # print("/n")
+    # print("transit_positions: ", _['transit_positions'])
+    # print("/n")
+    # print("/n")
+    # print("mahadasha: ", _['mahadasha'])
+    # print("/n")
+    # print("/n")
+    # print("antardasha: ", _['antardasha'])
+    # print("/n")
+    # print("/n")
+    # print("natal_strengths: ", _['natal_strengths'])
+    # print("/n")
+    # print("/n")
+    # print("transit_events: ", _['transit_events'])
+    # print("/n")
+    # print("/n")
+    # print("influence_rows_now: ", _['influence_now'])
+    # print("/n")
+    # print("/n")
+    # print("current_md: ", _['current_md'])
+    # print("/n")
+    # print("/n")
+    # print("current_ad: ", _['current_ad'])
+    # print("/n")
+    # print("/n")
+    # print("location: ", _['birth_location'])
+    # print("/n")
+    # print("/n")
+    # print("location: ", _['current_location'])
 
+    username, name, charts = input_for_LLM("viren", "virendrasinh chavda", "1992-10-15", "00:30", "kodinar, india", "colchester, united kingdom",
+                                           include_transit_events=True, transit_span_years=3)
+    print(charts)

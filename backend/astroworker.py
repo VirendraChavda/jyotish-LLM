@@ -9,12 +9,13 @@ from pymongo.errors import PyMongoError
 from astrologer import build_charts
 from db import users_col, profiles_col, sessions_col, mongo_sanitize
 
-def compute_and_save_static_charts(username: str, name: str, birth_date_iso: str, birth_time_str: str, birth_place: str, current_place: str):
+def compute_and_save_static_charts(username: str, name: str, birth_date_iso: str, birth_time_str: str, birth_place: str, current_place: str,
+                                   include_transit_events=True, transit_span_years=3):
     try:
         y, m, d = map(int, birth_date_iso.split("-"))
         hh, mm = map(int, birth_time_str.split(":"))
 
-        out = build_charts(y, m, d, hh, mm, birth_place, current_place)
+        out = build_charts(y, m, d, hh, mm, birth_place, current_place, include_transit_events=include_transit_events, transit_span_years=transit_span_years)
         out_s = mongo_sanitize(out)
 
         profile_doc = {
@@ -64,18 +65,6 @@ def compute_and_save_static_charts(username: str, name: str, birth_date_iso: str
         # optionally also: logging.exception("Failed to build charts for %s", username)
         #print("Error!")
 
-def input_for_LLM(username: str, name: str, birth_date_iso: str, birth_time_str: str, birth_place: str, current_place: str):
-    try:
-        y, m, d = map(int, birth_date_iso.split("-"))
-        hh, mm = map(int, birth_time_str.split(":"))
-
-        out = build_charts(y, m, d, hh, mm, birth_place, current_place)
-        return username, name, out
-
-    except:
-        print("Error")
-       
-
 def spawn_chart_job(*args, **kwargs):
     t = threading.Thread(target=compute_and_save_static_charts, args=args, kwargs=kwargs, daemon=True)
     t.start()
@@ -83,4 +72,4 @@ def spawn_chart_job(*args, **kwargs):
 if __name__ == "__main__":
     # spawn_chart_job("param", "Param Sundari", "1962-4-08", "2:30", "Pune, India", "Mumbai, Gujarat")
     # time.sleep(60)
-    compute_and_save_static_charts("param", "Param Sundari", "1962-4-08", "2:30", "Pune, India", "Mumbai, Gujarat")
+    compute_and_save_static_charts("param", "Param Sundari", "1962-4-08", "2:30", "Pune, India", "Mumbai, Gujarat", include_transit_events=True, transit_span_years=3)
