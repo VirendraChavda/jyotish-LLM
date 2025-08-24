@@ -605,14 +605,14 @@ def build_charts(y, m, d, hh, mi, birth_place_name, current_loc, include_transit
 
 # Create chart inputs for LLM
 
-def input_for_LLM(username: str, name: str, birth_date_iso: str, birth_time_str: str, birth_place: str, current_place: str,
+def input_for_LLM(birth_date_iso: str, birth_time_str: str, birth_place: str, current_place: str,
                   include_transit_events=True, transit_span_years=3):
     try:
         y, m, d = map(int, birth_date_iso.split("-"))
         hh, mm = map(int, birth_time_str.split(":"))
 
         out = build_charts(y, m, d, hh, mm, birth_place, current_place, include_transit_events=include_transit_events, transit_span_years=transit_span_years)
-        return username, name, out
+        return out
 
     except:
         print("Error")
@@ -671,6 +671,8 @@ if __name__ == "__main__":
     # print("/n")
     # print("location: ", _['current_location'])
 
-    username, name, charts = input_for_LLM("viren", "virendrasinh chavda", "1992-10-15", "00:30", "kodinar, india", "colchester, united kingdom",
+    charts = input_for_LLM("1992-10-15", "00:30", "kodinar, india", "colchester, united kingdom",
                                            include_transit_events=True, transit_span_years=3)
     print(charts)
+    import sys
+    print(sys.getsizeof(charts))

@@ -9,4 +9,5 @@ backend/__pycache__
 LLM_experiment.ipynb
 rag_experiment.ipynb
 memory_experiment.ipynb
-astroworker.py
+memory_experiment2.ipynb
+streamlit_test.py
