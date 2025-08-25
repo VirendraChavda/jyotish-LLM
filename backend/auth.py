@@ -24,3 +24,7 @@ def decode_token(token: str) -> Optional[str]:
         return payload.get("sub")
     except Exception:
         return None
+    
+def get_current_user():
+    # Fake user object for testing
+    return {"id": "test-user-123"}

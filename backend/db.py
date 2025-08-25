@@ -109,6 +109,48 @@ def ensure_schema():
               ON memory_episodes (user_id, asked_at DESC);
         """))
 
+from sqlalchemy import text
+def ensure_full_memory_schema():
+    ensure_schema()  # creates memory_episodes + adds topic on entities if needed
+    with engine.begin() as conn:
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS memory_entities (
+              user_id TEXT NOT NULL,
+              type TEXT NOT NULL,
+              key TEXT NOT NULL,
+              value TEXT,
+              topic TEXT,
+              last_seen_at TIMESTAMPTZ DEFAULT now(),
+              PRIMARY KEY (user_id, type, key)
+            );
+        """))
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS memory_notes (
+              user_id TEXT NOT NULL,
+              note TEXT NOT NULL,
+              embedding vector(1536),
+              last_seen_at TIMESTAMPTZ DEFAULT now(),
+              PRIMARY KEY (user_id, note)
+            );
+        """))
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS memory_summary (
+              user_id TEXT PRIMARY KEY,
+              text TEXT NOT NULL,
+              updated_at TIMESTAMPTZ DEFAULT now()
+            );
+        """))
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS user_details (
+              user_id TEXT PRIMARY KEY,
+              birth_date DATE,
+              birth_time TIME,
+              birth_place TEXT,
+              current_place TEXT,
+              created_at TIMESTAMPTZ DEFAULT now()
+            );
+        """))
+
 # ------------------------------------User details------------------------------------------
 from typing import Optional, Any
 def query_user_details(user_id: str) -> Optional[Dict[str, Any]]:
@@ -128,49 +170,47 @@ def query_user_details(user_id: str) -> Optional[Dict[str, Any]]:
         ).fetchone()
     return dict(row._mapping) if row else None
 
-def update_user_details(user_id: str, **changes) -> None:
-    """
-    Update one or more columns for an existing user in user_details.
-    Also sets created_at = now() on any successful update.
-    """
-    if not changes:
+def update_user_details(user_id: str, birth_date_iso: str | None = None, birth_time_str: str | None = None,
+                        birth_place: str | None = None, current_place: str | None = None):
+    sets = []
+    params = {"uid": user_id}
+    if birth_date_iso is not None:
+        sets.append("birth_date = CAST(:bd AS DATE)")
+        params["bd"] = birth_date_iso
+    if birth_time_str is not None:
+        sets.append("birth_time = CAST(:bt AS TIME)")
+        params["bt"] = birth_time_str
+    if birth_place is not None:
+        sets.append("birth_place = :bp")
+        params["bp"] = birth_place
+    if current_place is not None:
+        sets.append("current_place = :cp")
+        params["cp"] = current_place
+    if not sets:
         return
-
-    ALLOWED_USER_DETAIL_FIELDS = {"birth_date", "birth_time", "birth_place", "current_place"}
-    updates = {k: v for k, v in changes.items() if k in ALLOWED_USER_DETAIL_FIELDS and v is not None}
-    if not updates:
-        return
-
-    # build SET clause + touch created_at
-    set_parts = [f"{col} = :{col}" for col in updates.keys()]
-    set_parts.append("created_at = now()")  # touch timestamp on any update
-    set_clause = ", ".join(set_parts)
-    params = {"uid": user_id, **updates}
-
+    sql = f"UPDATE user_details SET {', '.join(sets)}, created_at = now() WHERE user_id = :uid"
     with engine.begin() as conn:
-        result = conn.execute(
-            text(f"""
-                UPDATE user_details
-                SET {set_clause}
-                WHERE user_id = :uid
-            """),
-            params,
-        )
-        if result.rowcount == 0:
-            raise ValueError(f"user_id '{user_id}' not found in user_details")
+        conn.execute(text(sql), params)
         
-def upsert_user_details(user_id, birth_date_iso, birth_time_str, birth_place, current_place):
+def upsert_user_details(user_id: str, birth_date_iso: str, birth_time_str: str,
+                        birth_place: str, current_place: str):
     with engine.begin() as conn:
-                conn.execute(text("""
-                    INSERT INTO user_details (user_id, birth_date, birth_time, birth_place, current_place, created_at)
-                    VALUES (:uid, :bd::date, :bt::time, :bp, :cp, now())
-                    ON CONFLICT (user_id)
-                    DO UPDATE SET birth_date = EXCLUDED.birth_date,
-                                  birth_time = EXCLUDED.birth_time,
-                                  birth_place = EXCLUDED.birth_place,
-                                  current_place = EXCLUDED.current_place,
-                                  created_at = now()
-                """), {"uid": user_id, "bd": birth_date_iso, "bt": birth_time_str, "bp": birth_place, "cp": current_place})
+        conn.execute(
+            text("""
+                INSERT INTO user_details
+                    (user_id, birth_date, birth_time, birth_place, current_place, created_at)
+                VALUES
+                    (:uid, CAST(:bd AS DATE), CAST(:bt AS TIME), :bp, :cp, now())
+                ON CONFLICT (user_id)
+                DO UPDATE SET
+                    birth_date    = EXCLUDED.birth_date,
+                    birth_time    = EXCLUDED.birth_time,
+                    birth_place   = EXCLUDED.birth_place,
+                    current_place = EXCLUDED.current_place,
+                    created_at    = now()
+            """),
+            {"uid": user_id, "bd": birth_date_iso, "bt": birth_time_str, "bp": birth_place, "cp": current_place},
+        )
                 
 # ------------------------------------Summarization------------------------------------------
 def load_summary(user_id: str) -> str:
